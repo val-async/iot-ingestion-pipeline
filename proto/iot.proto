@@ -1,0 +1,18 @@
+service IoTIngestion {
+  // Bidirectional streaming for high-throughput ingestion
+  rpc StreamTelemetry (stream TelemetryPacket) returns (stream Acknowledgement);
+}
+
+message TelemetryPacket {
+  string device_id = 1;
+  double voltage = 2;
+  double current = 3;
+  int64 timestamp_ns = 4;
+  bytes payload_signature = 5;
+}
+
+message Acknowledgement {
+  string device_id = 1;
+  bool accepted = 2;
+  string error_msg = 3;
+}
