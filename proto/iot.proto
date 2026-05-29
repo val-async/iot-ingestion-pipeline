@@ -1,3 +1,9 @@
+syntax = "proto3";
+
+package iot;
+
+option go_package = "github.com/val-async/iot-ingestion-pipeline";
+
 service IoTIngestion {
   // Bidirectional streaming for high-throughput ingestion
   rpc StreamTelemetry (stream TelemetryPacket) returns (stream Acknowledgement);

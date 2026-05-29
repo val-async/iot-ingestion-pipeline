@@ -1,1 +1,185 @@
-# add services for redPanda , influxDB, prometheus
+services:
+  # ============================================
+  # Redpanda - Kafka-Compatible Message Broker
+  # ============================================
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.3
+    container_name: redpanda
+    restart: unless-stopped
+
+    command:
+      - redpanda
+      - start
+      - --smp
+      - "1"
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - "0"
+
+      # Internal Docker listener + external host listener
+      # 29092 -> containers inside docker network
+      # 9092  -> localhost access from host machine
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+
+      # Redpanda RPC
+      - --rpc-addr
+      - 0.0.0.0:33145
+
+      - --advertise-rpc-addr
+      - redpanda:33145
+
+      # HTTP Proxy
+      - --pandaproxy-addr
+      - PLAINTEXT://0.0.0.0:28082,OUTSIDE://0.0.0.0:8082
+
+      - --advertise-pandaproxy-addr
+      - PLAINTEXT://redpanda:28082,OUTSIDE://localhost:8082
+
+    ports:
+      - "9092:9092"
+      - "8082:8082"
+      - "9644:9644"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9644/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+    networks:
+      - pipeline-net
+
+  # ============================================
+  # TimescaleDB - Time Series Database
+  # ============================================
+  timescaledb:
+    image: timescale/timescaledb:2.15.3-pg16
+    container_name: timescaledb
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+    networks:
+      - pipeline-net
+
+  # ============================================
+  # Redpanda Console - Topic/UI Viewer
+  # ============================================
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.3.2
+    container_name: redpanda-console
+    restart: unless-stopped
+
+    entrypoint: /bin/sh
+
+    command: >
+      -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml;
+      /app/console'
+
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:29092"]
+
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+
+    ports:
+      - "8080:8080"
+
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+    networks:
+      - pipeline-net
+
+  # ============================================
+  # Prometheus - Metrics Collection
+  # ============================================
+  prometheus:
+    image: prom/prometheus:v2.50.1
+    container_name: prometheus
+    restart: unless-stopped
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+    ports:
+      - "9090:9090"
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+    networks:
+      - pipeline-net
+
+  # ============================================
+  # Grafana - Metrics Visualization
+  # ============================================
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: grafana
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+    depends_on:
+      - prometheus
+
+    networks:
+      - pipeline-net
+
+networks:
+  pipeline-net:
+    driver: bridge
+
+volumes:
+  timescale-data:
